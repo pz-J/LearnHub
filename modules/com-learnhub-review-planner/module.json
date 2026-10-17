@@ -1,0 +1,14 @@
+{
+  "id": "com.learnhub.review-planner",
+  "name": "复习规划",
+  "version": "1.0.0",
+  "type": "feature",
+  "entry": "index.js",
+  "description": "按艾宾浩斯遗忘曲线为论文生成复习节点并写入日历，跟踪今日复习队列，可授权生成 AI 自测题。",
+  "author": "LearnHub",
+  "permissions": ["storage.own", "storage.data", "calendar.write", "ui.panel"],
+  "optionalPermissions": ["ai.invoke", "notify"],
+  "contributes": {
+    "routes": [{ "key": "review", "title": "复习规划" }]
+  }
+}

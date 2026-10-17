@@ -1,0 +1,12 @@
+{
+  "id": "com.example.hello",
+  "name": "你好示例",
+  "version": "1.0.0",
+  "type": "feature",
+  "entry": "index.js",
+  "description": "示例子模块：演示侧边栏面板注册、私有存储、运行时权限申请、AI 调用与成就任务登记",
+  "author": "LearnHub",
+  "permissions": ["storage.own", "ui.panel"],
+  "optionalPermissions": ["ai.invoke", "notify", "achievements.award"],
+  "contributes": { "panels": [{ "slot": "sidebar", "title": "示例" }] }
+}

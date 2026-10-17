@@ -1,0 +1,14 @@
+{
+  "id": "com.learnhub.meta.permission-center",
+  "name": "元模块权限管家",
+  "version": "1.0.0",
+  "type": "meta",
+  "entry": "index.js",
+  "description": "集中查看模块可选授权，并为科研日志等模块申请或撤销额外权限。",
+  "author": "LearnHub",
+  "permissions": ["meta.escalate", "ui.panel"],
+  "optionalPermissions": [],
+  "contributes": {
+    "routes": [{ "key": "permission-center", "title": "权限管家" }]
+  }
+}

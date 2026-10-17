@@ -1,0 +1,28 @@
+appId: com.learnhub.app
+productName: LearnHub
+copyright: LearnHub
+
+directories:
+  output: release/${version}
+
+files:
+  - out/**
+
+asar: true
+asarUnpack:
+  - '**/node_modules/koffi/**'
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: LearnHub-Setup-${version}.${ext}
+  shortcutName: LearnHub
+  createDesktopShortcut: always
+  createStartMenuShortcut: true

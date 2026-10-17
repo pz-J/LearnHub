@@ -1,0 +1,14 @@
+{
+  "id": "com.learnhub.vocab-box",
+  "name": "生词本",
+  "version": "1.0.0",
+  "type": "feature",
+  "entry": "index.js",
+  "description": "在阅读器中一键收录生词并在原文打紫色标记，支持 AI 释义、备注、搜索、跳转、CSV 导出与复制。",
+  "author": "LearnHub",
+  "permissions": ["storage.own", "storage.data", "reader.annotate", "ui.panel", "files.pick"],
+  "optionalPermissions": ["ai.invoke", "clipboard"],
+  "contributes": {
+    "panels": [{ "slot": "sidebar", "title": "生词本" }]
+  }
+}

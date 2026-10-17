@@ -1,0 +1,14 @@
+{
+  "id": "com.learnhub.study-journal",
+  "name": "科研日志",
+  "version": "1.0.0",
+  "type": "feature",
+  "entry": "index.js",
+  "description": "记录每日研究笔记、自动归档专注时段，并可在授权后生成 AI 日总结。",
+  "author": "LearnHub",
+  "permissions": ["storage.own", "ui.panel"],
+  "optionalPermissions": ["ai.invoke", "files.pick"],
+  "contributes": {
+    "routes": [{ "key": "study-journal", "title": "科研日志" }]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "id": "com.learnhub.study-export",
+  "name": "导出复习稿",
+  "version": "1.0.0",
+  "type": "feature",
+  "entry": "index.js",
+  "description": "将文献的思维链路问题、问答归档与标记解释整合为 Markdown 复习稿，支持预览、单篇/合并导出与复制全文。",
+  "author": "LearnHub",
+  "permissions": ["storage.data", "files.pick", "ui.panel"],
+  "optionalPermissions": ["clipboard"],
+  "contributes": {
+    "routes": [{ "key": "study-export", "title": "导出复习稿" }]
+  }
+}

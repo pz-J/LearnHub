@@ -1,0 +1,10 @@
+node_modules/
+out/
+dist/
+release/
+*.local
+*.log
+.DS_Store
+.vscode/
+# electron-vite 临时快照文件
+electron.vite.config.*.mjs

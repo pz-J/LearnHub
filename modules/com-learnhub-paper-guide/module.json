@@ -1,0 +1,14 @@
+{
+  "id": "com.learnhub.paper-guide",
+  "name": "精读向导",
+  "version": "1.0.0",
+  "type": "feature",
+  "entry": "index.js",
+  "description": "基于论文高亮标记与已有问答，生成 AI 流式结构化精读导读，可一键存为笔记并保留历史版本。",
+  "author": "LearnHub",
+  "permissions": ["storage.own", "storage.data", "ai.invoke", "ui.panel"],
+  "optionalPermissions": ["notify"],
+  "contributes": {
+    "routes": [{ "key": "paper-guide", "title": "精读向导" }]
+  }
+}
