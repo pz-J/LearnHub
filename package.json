@@ -11,6 +11,12 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit",
     "test:security": "node --experimental-strip-types --test tests/security-validation.test.mjs",
+    "test:reader": "node --experimental-strip-types --test tests/reader-location.test.mjs tests/reader-request.test.mjs",
+    "test:reader-learning": "node --test tests/reader-learning-contract.test.mjs",
+    "test:research": "node --experimental-strip-types --test tests/research-search.test.mjs tests/research-actions.test.mjs tests/serial-queue.test.mjs",
+    "test:todos": "node --experimental-strip-types --test tests/todo-persistence.test.mjs tests/todo-creation.test.mjs",
+    "test:module-nav": "node --experimental-strip-types --test tests/module-navigation.test.mjs tests/module-lifecycle.test.mjs tests/module-filesystem.test.mjs",
+    "test:achievement": "node --experimental-strip-types --test tests/achievement-claim.test.mjs tests/module-task-registration.test.mjs",
     "build:win": "electron-vite build && electron-builder --win --config electron-builder.yml && node scripts/clean-release.mjs"
   },
   "dependencies": {

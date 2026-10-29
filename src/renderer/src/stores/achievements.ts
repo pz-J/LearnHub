@@ -1,16 +1,23 @@
 import { create } from 'zustand'
 import { lh, uid } from '@/lib/ipc'
 import { usePapers } from './papers'
+import { useFlashcards } from './flashcards'
 import { useTodos } from './todos'
 import { useFocus } from './misc'
 import { useMindmaps } from './mindmaps'
 import { useNotes } from './notes'
 import { useTower, PRESET_SHAPES, BLOCK_COLORS } from './tower'
+import { serializeByKey } from '@/lib/serialQueue'
+import { registerModuleTaskOnce } from '@/lib/moduleTaskRegistration'
+import { commitRewardClaim } from '@/lib/rewardTransaction'
 
 const FILE = 'achievements.json'
+// Guard store-level operations too: UI-level disabled buttons do not prevent concurrent
+// calls from keyboard handlers, modules, or duplicate event delivery.
+const claimsInFlight = new Set<string>()
 
 /** 成就计量维度（全部从现有 store 实时统计，不重复记账） */
-export type Metric = 'papers' | 'papers-finished' | 'marks' | 'notes' | 'focus-min' | 'todos' | 'chain' | 'tower-top' | 'tower-combo'
+export type Metric = 'papers' | 'papers-finished' | 'marks' | 'notes' | 'cards-reviewed' | 'focus-min' | 'todos' | 'chain' | 'tower-top' | 'tower-combo'
 
 export interface AchievementDef {
   id: string
@@ -33,6 +40,8 @@ export const ACHIEVEMENT_DEFS: AchievementDef[] = [
   { id: 'a-todos-10', title: '言出必行', desc: '完成 10 个待办', metric: 'todos', target: 10 },
   { id: 'a-chain-20', title: '链路成网', desc: '思维链路累计 20 个节点', metric: 'chain', target: 20 },
   { id: 'a-notes-5', title: '笔耕不辍', desc: '累计写下 5 篇笔记', metric: 'notes', target: 5 },
+  { id: 'a-review-5', title: '温故知新', desc: '至少复习过 5 张不同的闪卡', metric: 'cards-reviewed', target: 5 },
+  { id: 'a-review-20', title: '记忆成网', desc: '至少复习过 20 张不同的闪卡', metric: 'cards-reviewed', target: 20 },
   { id: 'a-tower-50', title: '摩天大楼', desc: '成就大楼历史最高楼高达到 50', metric: 'tower-top', target: 50 },
   { id: 'a-combo-10', title: '十连巧匠', desc: '连续成功放置 10 块积木不塌落', metric: 'tower-combo', target: 10 }
 ]
@@ -79,7 +88,7 @@ interface AchievementsState {
   toggleCustomTask: (id: string) => Promise<void>
   removeCustomTask: (id: string) => Promise<void>
   /** 外部模块登记任务；同一 taskId 存在未领取记录时返回 false（防止刷积木） */
-  addModuleTask: (moduleId: string, taskId: string, title: string) => boolean
+  addModuleTask: (moduleId: string, taskId: string, title: string) => Promise<boolean>
   togglePaperFinished: (paperId: string) => Promise<void>
 }
 
@@ -114,8 +123,11 @@ export const useAchievements = create<AchievementsState>((set, get) => ({
     return {
       papers: papers.length,
       'papers-finished': papers.filter((p) => p.finished).length,
-      marks: papers.reduce((n, p) => n + p.highlights.length, 0),
+      // Auto-generated duplicate overlays are navigation aids, not additional learning work.
+      // Count deliberate, source-backed marks only so repeated rendering cannot inflate progress.
+      marks: papers.reduce((n, p) => n + (p.highlights ?? []).filter((h) => !h.isAuto && !!h.text?.trim() && h.page >= 1).length, 0),
       notes: Object.keys(useNotes.getState().notes).length,
+      'cards-reviewed': useFlashcards.getState().items.filter((card) => !!card.lastReview).length,
       'focus-min': useFocus.getState().sessions.reduce((n, s) => n + (s.minutes || 0), 0),
       todos: useTodos.getState().items.filter((t) => t.done).length,
       chain: Object.values(useMindmaps.getState().maps).reduce((n, m) => n + m.nodes.length, 0),
@@ -124,66 +136,95 @@ export const useAchievements = create<AchievementsState>((set, get) => ({
     }
   },
   claim: async (defId, shapeId, color) => {
-    const s = get()
-    if (s.claimedIds.includes(defId)) return
-    const next = { claimedIds: [...s.claimedIds, defId], customTasks: s.customTasks, moduleTasks: s.moduleTasks }
-    set(next)
-    await persist(next)
-    await useTower.getState().grant(shapeId, color)
+    const key = `achievement:${defId}`
+    if (claimsInFlight.has(key)) throw new Error('该成就正在领取，请稍候')
+    claimsInFlight.add(key)
+    try {
+      await serializeByKey('achievements', async () => {
+        const s = get()
+        if (s.claimedIds.includes(defId)) throw new Error('该成就已领取')
+        const def = ACHIEVEMENT_DEFS.find((d) => d.id === defId)
+        if (!def || get().progress()[def.metric] < def.target) throw new Error('当前学习进度尚未达标，请刷新后重试')
+        const next = { claimedIds: [...s.claimedIds, defId], customTasks: s.customTasks, moduleTasks: s.moduleTasks }
+        await commitRewardClaim({
+          previous: { claimedIds: s.claimedIds, customTasks: s.customTasks, moduleTasks: s.moduleTasks },
+          next,
+          persist,
+          grant: () => useTower.getState().grant(shapeId, color),
+          publish: set
+        })
+      })
+    } finally {
+      claimsInFlight.delete(key)
+    }
   },
   claimTask: async (taskId, shapeId, color) => {
-    const s = get()
-    const custom = s.customTasks.find((t) => t.id === taskId && t.done && !t.claimed)
-    const module_ = s.moduleTasks.find((t) => t.id === taskId && !t.claimed)
-    if (!custom && !module_) return
-    const next = {
-      claimedIds: s.claimedIds,
-      customTasks: custom ? s.customTasks.map((t) => (t.id === taskId ? { ...t, claimed: true } : t)) : s.customTasks,
-      moduleTasks: module_ ? s.moduleTasks.map((t) => (t.id === taskId ? { ...t, claimed: true } : t)) : s.moduleTasks
+    const key = `task:${taskId}`
+    if (claimsInFlight.has(key)) throw new Error('该任务奖励正在领取，请稍候')
+    claimsInFlight.add(key)
+    try {
+      await serializeByKey('achievements', async () => {
+        const s = get()
+        const custom = s.customTasks.find((t) => t.id === taskId && t.done && !t.claimed)
+        const module_ = s.moduleTasks.find((t) => t.id === taskId && !t.claimed)
+        if (!custom && !module_) throw new Error('该任务不存在、未完成或奖励已领取')
+        const next = {
+          claimedIds: s.claimedIds,
+          customTasks: custom ? s.customTasks.map((t) => (t.id === taskId ? { ...t, claimed: true } : t)) : s.customTasks,
+          moduleTasks: module_ ? s.moduleTasks.map((t) => (t.id === taskId ? { ...t, claimed: true } : t)) : s.moduleTasks
+        }
+        await commitRewardClaim({
+          previous: { claimedIds: s.claimedIds, customTasks: s.customTasks, moduleTasks: s.moduleTasks },
+          next,
+          persist,
+          grant: () => useTower.getState().grant(shapeId, color),
+          publish: set
+        })
+      })
+    } finally {
+      claimsInFlight.delete(key)
     }
-    set(next)
-    await persist(next)
-    await useTower.getState().grant(shapeId, color)
   },
   addCustomTask: async (title) => {
-    const s = get()
-    const task: CustomTask = { id: uid('ct_'), title: title.trim().slice(0, 60) || '自定义任务', done: false, claimed: false, createdAt: Date.now() }
-    const next = { claimedIds: s.claimedIds, customTasks: [...s.customTasks, task], moduleTasks: s.moduleTasks }
-    set(next)
-    await persist(next)
+    await serializeByKey('achievements', async () => {
+      const s = get()
+      const task: CustomTask = { id: uid('ct_'), title: title.trim().slice(0, 60) || '自定义任务', done: false, claimed: false, createdAt: Date.now() }
+      const next = { claimedIds: s.claimedIds, customTasks: [...s.customTasks, task], moduleTasks: s.moduleTasks }
+      await persist(next)
+      set(next)
+    })
   },
   toggleCustomTask: async (id) => {
-    const s = get()
-    const next = {
-      claimedIds: s.claimedIds,
-      customTasks: s.customTasks.map((t) => (t.id === id ? { ...t, done: !t.done, doneAt: !t.done ? Date.now() : undefined } : t)),
-      moduleTasks: s.moduleTasks
-    }
-    set(next)
-    await persist(next)
+    await serializeByKey('achievements', async () => {
+      const s = get()
+      const next = {
+        claimedIds: s.claimedIds,
+        customTasks: s.customTasks.map((t) => (t.id === id ? { ...t, done: !t.done, doneAt: !t.done ? Date.now() : undefined } : t)),
+        moduleTasks: s.moduleTasks
+      }
+      await persist(next)
+      set(next)
+    })
   },
   removeCustomTask: async (id) => {
-    const s = get()
-    const next = { claimedIds: s.claimedIds, customTasks: s.customTasks.filter((t) => t.id !== id), moduleTasks: s.moduleTasks }
-    set(next)
-    await persist(next)
+    await serializeByKey('achievements', async () => {
+      const s = get()
+      const next = { claimedIds: s.claimedIds, customTasks: s.customTasks.filter((t) => t.id !== id), moduleTasks: s.moduleTasks }
+      await persist(next)
+      set(next)
+    })
   },
-  addModuleTask: (moduleId, taskId, title) => {
-    const s = get()
-    if (s.moduleTasks.some((t) => t.moduleId === moduleId && t.taskId === taskId && !t.claimed)) return false
-    const entry: ModuleTask = { id: uid('mt_'), moduleId, taskId, title: title.slice(0, 80), claimed: false, at: Date.now() }
-    // 克制存储：最多保留 100 条任务记录，丢弃最早的已领取记录
-    const kept = [...s.moduleTasks, entry]
-    while (kept.length > 100) {
-      const idx = kept.findIndex((t) => t.claimed)
-      if (idx < 0) break
-      kept.splice(idx, 1)
-    }
-    const next = { claimedIds: s.claimedIds, customTasks: s.customTasks, moduleTasks: kept }
-    set(next)
-    void persist(next)
-    return true
-  },
+  addModuleTask: async (moduleId, taskId, title) => registerModuleTaskOnce({
+    moduleId,
+    taskId,
+    getState: get,
+    createTask: (): ModuleTask => ({ id: uid('mt_'), moduleId, taskId, title: title.slice(0, 80), claimed: false, at: Date.now() }),
+    buildNext: (s, moduleTasks) => ({ claimedIds: s.claimedIds, customTasks: s.customTasks, moduleTasks }),
+    persist,
+    publish: (next) => set(next),
+    serialize: (operation) => serializeByKey('achievements', operation),
+    maxRecords: 100
+  }),
   togglePaperFinished: async (paperId) => {
     const cur = usePapers.getState().papers[paperId]
     if (!cur) return

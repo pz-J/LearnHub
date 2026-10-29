@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { usePapers } from '@/stores/papers'
 import { useUi } from '@/stores/ui'
 import { lh } from '@/lib/ipc'
@@ -16,32 +16,51 @@ export function LibraryView() {
   const toast = useUi((s) => s.toast)
   const [tagInput, setTagInput] = useState<Record<string, string>>({})
   const [query, setQuery] = useState('')
+  const [status, setStatus] = useState<'all' | 'unread' | 'finished'>('all')
+  const [sort, setSort] = useState<'updated' | 'added' | 'title'>('updated')
 
   const importPdf = async () => {
-    const r = (await lh.pdfPickImport()) as { id: string; fileName: string } | null
-    if (!r) return
-    await add({ id: r.id, fileName: r.fileName })
-    toast('导入成功，双击开始阅读', 'ok')
+    try {
+      const r = (await lh.pdfPickImport()) as { id: string; fileName: string } | null
+      if (!r) return
+      await add({ id: r.id, fileName: r.fileName })
+      toast('导入成功，可以立即开始阅读', 'ok')
+    } catch (error) {
+      toast(`导入失败：${(error as Error).message || '请检查 PDF 文件后重试'}`, 'error')
+    }
   }
 
-  const list = order
+  const list = useMemo(() => order
     .map((id) => papers[id])
     .filter(Boolean)
-    .filter((p) => !query || p.title.toLowerCase().includes(query.toLowerCase()) || p.tags.some((t) => t.includes(query)))
+    .filter((p) => status === 'all' || (status === 'finished' ? !!p.finished : !p.finished))
+    .filter((p) => !query || [p.title, p.fileName, p.meta?.authors, p.meta?.doi, p.meta?.year, p.meta?.venue, ...p.tags, ...p.highlights.flatMap((h) => [h.text, h.note, h.aiExplain]), ...(p.answers || []).flatMap((a) => [a.question, a.quote])].some((value) => String(value || '').toLowerCase().includes(query.toLowerCase())))
+    .sort((a, b) => sort === 'title' ? a.title.localeCompare(b.title) : sort === 'added' ? b.createdAt - a.createdAt : b.updatedAt - a.updatedAt), [order, papers, status, query, sort])
 
   return (
     <div className="flex h-full flex-col overflow-hidden p-4">
-      <div className="mb-4 flex items-center gap-2">
-        <h1 className="mr-auto text-lg font-semibold">文献库</h1>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="mr-auto"><h1 className="text-lg font-semibold">文献库</h1><p className="mt-0.5 text-xs text-txt-dim">{list.length} 篇文献 · 搜索标题、作者、DOI 或标签</p></div>
         <input
-          className="w-56 rounded-lg border border-line bg-bg px-3 py-1.5 text-sm"
-          placeholder="搜索标题 / 标签"
+          className="w-full rounded-lg border border-line bg-bg px-3 py-1.5 text-sm sm:w-64"
+          placeholder="搜索标题 / 作者 / DOI / 标签"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
         <button className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90" onClick={() => void importPdf()}>
-          导入 PDF
+          + 导入 PDF
         </button>
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="flex rounded-lg border border-line bg-bg p-1">
+          {([{ id: 'all', label: `全部 ${order.length}` }, { id: 'unread', label: `待读 ${order.filter((id) => !papers[id]?.finished).length}` }, { id: 'finished', label: `已读完 ${order.filter((id) => papers[id]?.finished).length}` }] as const).map((item) => <button key={item.id} className={`rounded-md px-3 py-1 text-xs ${status === item.id ? 'bg-accent/15 font-medium text-accent' : 'text-txt-dim hover:text-txt'}`} onClick={() => setStatus(item.id)}>{item.label}</button>)}
+        </div>
+        <label className="ml-auto flex items-center gap-2 text-xs text-txt-dim">排序
+          <select className="rounded-lg border border-line bg-bg px-2 py-1.5 text-xs text-txt" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+            <option value="updated">最近更新</option><option value="added">最近添加</option><option value="title">标题 A–Z</option>
+          </select>
+        </label>
       </div>
 
       <div className="grid flex-1 grid-cols-1 content-start gap-3 overflow-y-auto md:grid-cols-2 xl:grid-cols-3">
@@ -54,7 +73,7 @@ export function LibraryView() {
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1" onClick={() => openPaper(p.id)}>
                 <div className="line-clamp-2 font-medium leading-6 group-hover:text-accent">{p.title}</div>
-                <div className="mt-1 truncate text-xs text-txt-dim">{p.fileName}</div>
+                <div className="mt-1 truncate text-xs text-txt-dim">{[p.meta?.authors, p.meta?.year, p.meta?.venue].filter(Boolean).join(' · ') || p.fileName}</div>
               </div>
               <button
                 className="shrink-0 rounded p-1 text-xs text-txt-dim opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
@@ -88,10 +107,12 @@ export function LibraryView() {
               }}
             />
 
-            <div className="mt-3 flex items-center gap-3 text-xs text-txt-dim">
+            <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-txt-dim">
               <span>高亮 {p.highlights.length}</span>
               <span>搜索 {p.searches.length}</span>
-              <span className="ml-auto">{fmtTime(p.createdAt)}</span>
+              <span>{(p.answers || []).length} 条问答</span>
+              <span className="ml-auto">更新于 {fmtTime(p.updatedAt)}</span>
+              {p.finished && <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-green-400">已读完</span>}
               <button
                 className="rounded-md border border-accent/40 px-2 py-1 text-accent hover:bg-accent/10"
                 onClick={() => openPaper(p.id)}

@@ -5,6 +5,7 @@ import * as path from 'path'
 import { app } from 'electron'
 import { safeJoin, sanitizeId } from './store'
 import { assertNoSymlinkComponents, isExternalModuleId, validateInstallPayload } from './securityValidation'
+import { uninstallModuleDirectory } from './moduleFilesystem'
 
 const modulesDir = () => path.join(app.getPath('userData'), 'modules')
 const MAX_FILE_SIZE = 2 * 1024 * 1024
@@ -173,7 +174,7 @@ export function registerModulesIpc(): void {
     let manifest: { id?: unknown; type?: unknown }
     try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) } catch { throw new Error('模块清单损坏，已保留目录供恢复') }
     if (manifest.id !== id || (manifest.type !== 'feature' && manifest.type !== 'meta')) throw new Error('模块清单与目录不匹配，已保留目录供恢复')
-    fs.rmSync(target, { recursive: true })
+    uninstallModuleDirectory(modulesDir(), id, isExternalModuleId)
     return true
   })
 }

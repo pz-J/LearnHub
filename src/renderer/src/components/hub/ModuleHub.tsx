@@ -35,11 +35,12 @@ function PermList({ manifest, showOptional }: { manifest: ModuleManifest; showOp
                   {LEVEL_LABEL[g.level as keyof typeof LEVEL_LABEL]}权限
                 </div>
               )}
-              <div className="flex flex-wrap gap-1.5">
+              <div className="grid gap-1.5 sm:grid-cols-2">
                 {g.caps.map((c) => (
-                  <span key={c} className={cn('rounded-md border px-2 py-0.5 text-xs', LEVEL_STYLE[g.level])} title={CATALOG[c].desc}>
-                    {c}
-                  </span>
+                  <div key={c} className={cn('rounded-lg border px-2.5 py-2', LEVEL_STYLE[g.level])}>
+                    <div className="text-xs font-medium leading-5">{CATALOG[c].desc}</div>
+                    <code className="mt-0.5 block text-[10px] opacity-70">{c}</code>
+                  </div>
                 ))}
               </div>
             </div>
@@ -48,11 +49,12 @@ function PermList({ manifest, showOptional }: { manifest: ModuleManifest; showOp
       {showOptional && (manifest.optionalPermissions ?? []).length > 0 && (
         <div>
           <div className="mb-1 text-xs text-txt-dim">运行时可能申请（需逐次经元模块审批 + 你二次同意）</div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="grid gap-1.5 sm:grid-cols-2">
             {manifest.optionalPermissions!.map((c) => (
-              <span key={c} className="rounded-md border border-dashed border-line px-2 py-0.5 text-xs text-txt-dim" title={isCapability(c) ? CATALOG[c].desc : ''}>
-                {c}
-              </span>
+              <div key={c} className="rounded-lg border border-dashed border-line px-2.5 py-2 text-txt-dim">
+                <div className="text-xs leading-5">{isCapability(c) ? CATALOG[c].desc : '模块可能在运行时申请的额外能力'}</div>
+                <code className="mt-0.5 block text-[10px] opacity-70">{c}</code>
+              </div>
             ))}
           </div>
         </div>
@@ -178,6 +180,15 @@ export function ModuleHub() {
       toast('模块已卸载；私有存储会保留', 'ok')
     } catch (e) {
       toast(`卸载失败：${(e as Error).message || '未知错误'}`, 'error')
+    }
+  }
+
+  const revokeCapability = async (moduleId: string, capability: Capability) => {
+    try {
+      await revoke(moduleId, capability)
+      toast('已撤销该权限', 'ok')
+    } catch (e) {
+      toast(`权限撤销失败：${(e as Error).message || '未知错误'}`, 'error')
     }
   }
 
@@ -371,23 +382,22 @@ export function ModuleHub() {
               {expanded && (
                 <div className="mt-3 space-y-2 border-t border-line pt-3 text-xs">
                   <div className="text-txt-dim">必需权限（安装时已同意）：</div>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="grid gap-1.5 sm:grid-cols-2">
                     {m.manifest.permissions.map((c) => (
-                      <span key={c} className="rounded-md border border-accent/40 bg-accent/10 px-2 py-0.5 text-accent" title={isCapability(c) ? CATALOG[c as Capability].desc : ''}>
-                        {c}
-                      </span>
+                      <div key={c} className="rounded-lg border border-accent/30 bg-accent/5 px-2.5 py-2">
+                        <div className="text-xs leading-5">{isCapability(c) ? CATALOG[c as Capability].desc : c}</div>
+                        <code className="mt-0.5 block text-[10px] text-txt-dim">{c}</code>
+                      </div>
                     ))}
                     {m.manifest.permissions.length === 0 && <span className="text-txt-dim">无</span>}
                   </div>
                   <div className="text-txt-dim">运行时授予的额外权限（可撤销，撤销后立即失效）：</div>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="grid gap-1.5 sm:grid-cols-2">
                     {runtimeGrants.map((c) => (
-                      <span key={c} className="flex items-center gap-1 rounded-md border border-orange-500/50 bg-orange-500/10 px-2 py-0.5 text-orange-400">
-                        {c}
-                        <button className="rounded-md border border-line px-1.5 py-0.5 text-txt-dim hover:border-red-400 hover:text-red-400" onClick={() => void revoke(m.id, c as Capability)} title="撤销">
-                          ×
-                        </button>
-                      </span>
+                      <div key={c} className="flex items-start gap-2 rounded-lg border border-orange-500/30 bg-orange-500/5 px-2.5 py-2">
+                        <div className="min-w-0 flex-1"><div className="text-xs leading-5">{CATALOG[c as Capability]?.desc ?? c}</div><code className="mt-0.5 block text-[10px] text-txt-dim">{c}</code></div>
+                        <button className="rounded-md border border-line px-1.5 py-0.5 text-xs text-txt-dim hover:border-red-400 hover:text-red-400" onClick={() => void revokeCapability(m.id, c as Capability)} title="撤销此权限">撤销</button>
+                      </div>
                     ))}
                     {runtimeGrants.length === 0 && <span className="text-txt-dim">无</span>}
                   </div>

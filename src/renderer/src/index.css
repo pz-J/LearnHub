@@ -7,6 +7,8 @@
   --lh-accent-rgb: 91 140 255;
   --lh-radius: 12px;
   --lh-font-scale: 1;
+  --lh-surface-glass: rgb(27 32 46 / 0.82);
+  --lh-shadow-soft: 0 12px 36px rgb(0 0 0 / 0.14);
 }
 
 /* 界面缩放（主题 API / 外观设置可调，全部 rem 尺寸随之缩放） */
@@ -60,6 +62,46 @@ body,
   color: #e6e9f2;
 }
 
+body {
+  font-size: 0.875rem;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Consistent, quiet depth across the app without overriding module-specific layouts. */
+button:not(:disabled) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.lh-panel {
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.015), 0 8px 24px rgb(0 0 0 / 0.06);
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.lh-panel:focus-within {
+  border-color: rgb(var(--lh-accent-rgb) / 0.38);
+}
+
+.lh-button-primary {
+  box-shadow: 0 5px 16px rgb(var(--lh-accent-rgb) / 0.18);
+}
+
+.lh-button-primary:hover:not(:disabled) {
+  box-shadow: 0 7px 20px rgb(var(--lh-accent-rgb) / 0.26);
+  transform: translateY(-1px);
+}
+
+.lh-input {
+  min-height: 2.5rem;
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.lh-input:focus-visible {
+  border-color: rgb(var(--lh-accent-rgb) / 0.85);
+  box-shadow: 0 0 0 3px rgb(var(--lh-accent-rgb) / 0.12);
+  outline: none;
+}
+
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -70,6 +112,10 @@ body,
 }
 *::-webkit-scrollbar-thumb:hover {
   background: #3a4361;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* ---------- pdfjs 文本层 ---------- */
@@ -168,5 +214,11 @@ a {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+}
+
+@media (max-width: 720px) {
+  .lh-panel {
+    box-shadow: none;
   }
 }

@@ -167,11 +167,18 @@ export const useTower = create<TowerState>((set, get) => ({
   },
   grant: async (shapeId, color) => {
     const s = get()
-    if (!s.shapes.some((x) => x.id === shapeId)) return
+    if (!s.shapes.some((x) => x.id === shapeId)) throw new Error('所选积木形状已不存在，请重新选择')
     const item: InvItem = { id: uid('inv_'), shapeId, color: Math.max(0, Math.min(BLOCK_COLORS.length - 1, color)) }
     const next = { ...snapshot(s), inventory: [...s.inventory, item] }
     set({ inventory: next.inventory })
-    await persist(next)
+    try {
+      await persist(next)
+    } catch (error) {
+      // Do not leave a phantom reward in memory when durable storage rejects the write.
+      // Remove only this grant: restoring the whole snapshot could erase a concurrent reward.
+      set({ inventory: get().inventory.filter((entry) => entry.id !== item.id) })
+      throw error
+    }
   },
   place: async (invId, x) => {
     const s = get()

@@ -9,6 +9,6 @@
   "permissions": ["storage.own", "storage.data", "reader.annotate", "ui.panel", "files.pick"],
   "optionalPermissions": ["ai.invoke", "clipboard"],
   "contributes": {
-    "panels": [{ "slot": "sidebar", "title": "生词本" }]
+    "routes": [{ "key": "vocab-box", "title": "生词本" }]
   }
 }

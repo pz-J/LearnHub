@@ -3,6 +3,8 @@ import { lh, uid } from '@/lib/ipc'
 import { eventBus } from '@/kernel/eventBus'
 import type { Todo } from '@/types'
 import { today } from '@/lib/utils'
+import { serializeByKey } from '@/lib/serialQueue'
+import { persistThenPublish } from '@/lib/persistedWrite'
 
 const FILE = 'todos.json'
 
@@ -28,37 +30,61 @@ export const useTodos = create<TodosState>((set, get) => ({
     set({ items: data?.items ?? [], loaded: true })
   },
   add: async (t) => {
-    const now = Date.now()
-    const todo: Todo = {
-      id: uid('t_'),
-      title: t.title ?? '新待办',
-      date: t.date ?? today(),
-      time: t.time,
-      priority: t.priority ?? 'mid',
-      done: false,
-      repeat: t.repeat ?? 'none',
-      tags: t.tags ?? [],
-      createdAt: now,
-      updatedAt: now
-    }
-    set({ items: [...get().items, todo] })
-    await persist(get().items)
-    eventBus.emit('data:todo-updated')
-    return todo
+    return serializeByKey('todos', async () => {
+      const current = get().items
+      if (t.sourceKey) {
+        const existing = current.find((item) => item.sourceKey === t.sourceKey)
+        if (existing) return existing
+      }
+      const now = Date.now()
+      const todo: Todo = {
+        id: uid('t_'),
+        title: t.title ?? '新待办',
+        date: t.date ?? today(),
+        time: t.time,
+        priority: t.priority ?? 'mid',
+        done: false,
+        repeat: t.repeat ?? 'none',
+        tags: t.tags ?? [],
+        createdAt: now,
+        updatedAt: now,
+        sourceKey: t.sourceKey,
+        sourceNoteId: t.sourceNoteId,
+        sourcePaperId: t.sourcePaperId,
+        sourcePage: t.sourcePage
+      }
+      const next = [...current, todo]
+      await persistThenPublish(next, persist, (items) => set({ items }))
+      eventBus.emit('data:todo-updated')
+      return todo
+    })
   },
   update: async (id, patch) => {
-    set({ items: get().items.map((t) => (t.id === id ? { ...t, ...patch, updatedAt: Date.now() } : t)) })
-    await persist(get().items)
-    eventBus.emit('data:todo-updated')
+    await serializeByKey('todos', async () => {
+      const current = get().items
+      const next = current.map((t) => (t.id === id ? { ...t, ...patch, updatedAt: Date.now() } : t))
+      if (next.every((t, i) => t === current[i])) return
+      await persistThenPublish(next, persist, (items) => set({ items }))
+      eventBus.emit('data:todo-updated')
+    })
   },
   toggle: async (id) => {
-    const t = get().items.find((x) => x.id === id)
-    if (!t) return
-    await get().update(id, { done: !t.done })
+    await serializeByKey('todos', async () => {
+      const current = get().items
+      const target = current.find((x) => x.id === id)
+      if (!target) return
+      const next = current.map((t) => t.id === id ? { ...t, done: !t.done, updatedAt: Date.now() } : t)
+      await persistThenPublish(next, persist, (items) => set({ items }))
+      eventBus.emit('data:todo-updated')
+    })
   },
   remove: async (id) => {
-    set({ items: get().items.filter((t) => t.id !== id) })
-    await persist(get().items)
-    eventBus.emit('data:todo-updated')
+    await serializeByKey('todos', async () => {
+      const current = get().items
+      const next = current.filter((t) => t.id !== id)
+      if (next.length === current.length) return
+      await persistThenPublish(next, persist, (items) => set({ items }))
+      eventBus.emit('data:todo-updated')
+    })
   }
 }))

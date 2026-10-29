@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ACHIEVEMENT_DEFS, useAchievements } from '@/stores/achievements'
 import { BLOCK_COLORS, useTower, type ShapeDef } from '@/stores/tower'
 import { usePapers } from '@/stores/papers'
+import { useFlashcards } from '@/stores/flashcards'
 import { useTodos } from '@/stores/todos'
 import { useFocus } from '@/stores/misc'
 import { useMindmaps } from '@/stores/mindmaps'
@@ -99,6 +100,8 @@ function ClaimModal({
       if (target.kind === 'achievement') await claim(target.id, shapeId, color)
       else await claimTask(target.id, shapeId, color)
       setDone(true)
+    } catch (error) {
+      useUi.getState().toast(`领取失败：${(error as Error)?.message || '本地保存失败，请重试'}`, 'error')
     } finally {
       setBusy(false)
     }
@@ -187,6 +190,7 @@ export function AchievementsModule() {
 
   const papers = usePapers((s) => s.papers)
   const order = usePapers((s) => s.order)
+  const flashcards = useFlashcards((s) => s.items)
   const todos = useTodos((s) => s.items)
   const focusSessions = useFocus((s) => s.sessions)
   const maps = useMindmaps((s) => s.maps)
@@ -200,19 +204,26 @@ export function AchievementsModule() {
   const [injectedShape, setInjectedShape] = useState<ShapeDef | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [taskTitle, setTaskTitle] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [loadAttempt, setLoadAttempt] = useState(0)
 
   // 加载顺序关键：先 tower 再 achievements（旧数据迁移要写入 tower）
   useEffect(() => {
     let alive = true
+    setLoadError('')
     void (async () => {
-      await useTower.getState().load()
-      await useAchievements.getState().load()
-      if (alive) setReady(true)
+      try {
+        await useTower.getState().load()
+        await useAchievements.getState().load()
+        if (alive) setReady(true)
+      } catch (error) {
+        if (alive) setLoadError((error as Error)?.message || '无法读取本地成就数据，请重试。')
+      }
     })()
     return () => {
       alive = false
     }
-  }, [])
+  }, [loadAttempt])
 
   // 作弊码：滑动窗口匹配完整序列后发放金色测试积木
   useEffect(() => {
@@ -229,7 +240,7 @@ export function AchievementsModule() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const progress = useMemo(() => useAchievements.getState().progress(), [papers, todos, focusSessions, maps, notes, claimedIds])
+  const progress = useMemo(() => useAchievements.getState().progress(), [papers, flashcards, todos, focusSessions, maps, notes, claimedIds, towerMaxTop, towerMaxCombo])
 
   // 可领取数（统计条用）
   const claimableCount = useMemo(
@@ -255,8 +266,22 @@ export function AchievementsModule() {
   const submitCustomTask = async () => {
     const title = taskTitle.trim()
     if (!title) return
-    await addCustomTask(title)
-    setTaskTitle('')
+    try {
+      await addCustomTask(title)
+      setTaskTitle('')
+      useUi.getState().toast('任务已保存', 'ok')
+    } catch (error) {
+      useUi.getState().toast(`任务保存失败：${(error as Error)?.message || '请重试'}`, 'error')
+    }
+  }
+
+  const runTaskMutation = async (action: () => Promise<void>, success: string) => {
+    try {
+      await action()
+      useUi.getState().toast(success, 'ok')
+    } catch (error) {
+      useUi.getState().toast(`操作未保存：${(error as Error)?.message || '请重试'}`, 'error')
+    }
   }
 
   const openDrawer = () => setDrawerOpen(true)
@@ -268,8 +293,8 @@ export function AchievementsModule() {
 
   if (!ready) {
     return (
-      <div className="h-full overflow-y-auto p-4">
-        <div className="lh-empty-state">成就数据加载中</div>
+      <div className="flex h-full items-center justify-center overflow-y-auto p-4">
+        <div className="lh-empty-state max-w-md">{loadError ? <><div className="font-medium text-txt">成就数据暂时无法加载</div><p className="mt-1">{loadError}</p><button className="lh-button lh-button-primary mt-3" onClick={() => setLoadAttempt((n) => n + 1)}>重试</button></> : '正在准备你的成就大楼…'}</div>
       </div>
     )
   }
@@ -408,7 +433,7 @@ export function AchievementsModule() {
                         ? 'border-green-500/60 bg-green-500/10 text-green-400'
                         : 'border-line text-txt-dim hover:border-accent hover:text-accent'
                     }`}
-                    onClick={() => void toggleCustomTask(t.id)}
+                          onClick={() => void runTaskMutation(() => toggleCustomTask(t.id), t.done ? '任务已重新打开' : '任务已完成并保存')}
                   >
                     {t.done ? '已完成' : '完成'}
                   </button>
@@ -426,7 +451,7 @@ export function AchievementsModule() {
                   <button
                     type="button"
                     className="rounded-md border border-red-500/60 px-2 py-1 text-xs text-red-400 transition-colors hover:bg-red-500/10"
-                    onClick={() => void removeCustomTask(t.id)}
+                    onClick={() => void runTaskMutation(() => removeCustomTask(t.id), '任务已删除')}
                   >
                     删除
                   </button>

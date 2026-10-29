@@ -3,6 +3,7 @@ import type { ModuleRecord } from './registry'
 import { useUi } from '@/stores/ui'
 import { eventBus } from './eventBus'
 import { canExternalEmit, canExternalSubscribe } from './securityPolicy'
+import { cleanupSandboxResources } from './sandboxCleanup'
 
 /** 沙箱内运行的引导脚本：host 代理 + 事件桥 + RPC */
 const BOOTSTRAP = `
@@ -163,11 +164,11 @@ export function attachSandboxHandlers(
   }
   window.addEventListener('message', onMessage)
   return () => {
-    active = false
-    window.removeEventListener('message', onMessage)
-    requests.forEach((controller) => controller.abort())
-    requests.clear()
-    busUnsubs.forEach((u) => u())
-    busUnsubs.clear()
+    cleanupSandboxResources({
+      deactivate: () => { active = false },
+      removeMessageListener: () => window.removeEventListener('message', onMessage),
+      requests,
+      busUnsubs
+    })
   }
 }

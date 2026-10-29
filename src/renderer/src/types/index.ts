@@ -11,6 +11,11 @@ export interface Todo {
   tags: string[]
   createdAt: number
   updatedAt: number
+  /** Stable source identity for idempotent research follow-up actions. */
+  sourceKey?: string
+  sourceNoteId?: string
+  sourcePaperId?: string
+  sourcePage?: number
 }
 
 export interface Period {

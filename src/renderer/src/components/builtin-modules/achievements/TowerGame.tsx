@@ -151,7 +151,7 @@ export function TowerGame({ onOpenDrawer }: { onOpenDrawer: () => void }) {
     }
   }, [maxTop])
 
-  const doPlace = async (invId: string, x: number) => {
+  const doPlace = async (invId: string, x: number): Promise<boolean> => {
     const before = useTower.getState().maxTop
     const r = await place(invId, x)
     if (r.fell) {
@@ -161,7 +161,7 @@ export function TowerGame({ onOpenDrawer }: { onOpenDrawer: () => void }) {
       setShakeKey((k) => k + 1)
       window.clearTimeout(shakeTimer.current)
       shakeTimer.current = window.setTimeout(() => setShake(false), 620)
-      return
+      return false
     }
     if (r.ok) {
       // 连续成功放置 +1（撤回/塌落清零），并刷新历史最高连击（只增不减）
@@ -180,6 +180,7 @@ export function TowerGame({ onOpenDrawer }: { onOpenDrawer: () => void }) {
       }
       setBounceKey((k) => k + 1) // 最新块下落弹跳
     }
+    return r.ok
   }
 
   const posFromEvent = (e: { clientX: number; currentTarget: Element }) => {
@@ -201,11 +202,13 @@ export function TowerGame({ onOpenDrawer }: { onOpenDrawer: () => void }) {
     if (e.button !== 0) return
     if (!selectedInv) return
     const invId = selectedInv
-    void doPlace(invId, posFromEvent(e))
-    // 连续放置：同形状库存还有剩余则自动选中下一块（虚影形状不变，落点随楼高实时重算），否则退出放置模式
-    const shapeId = inventory.find((i) => i.id === invId)?.shapeId
-    const next = inventory.find((i) => i.id !== invId && i.shapeId === shapeId)
-    setSelectedInv(next ? next.id : null)
+    // 只有成功放置后才自动选择下一块；失败时保留当前选择，避免让用户误以为积木丢失。
+    void doPlace(invId, posFromEvent(e)).then((placed) => {
+      if (!placed) return
+      const shapeId = inventory.find((i) => i.id === invId)?.shapeId
+      const next = useTower.getState().inventory.find((i) => i.shapeId === shapeId)
+      setSelectedInv(next ? next.id : null)
+    })
   }
 
   // 右键/中键拖拽平移

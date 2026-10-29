@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { lh } from '@/lib/ipc'
 import { isCapability, type Capability } from './permissions'
+import { serializeByKey } from '@/lib/serialQueue'
 
 /** 授权记录：userData/module-grants.json（不同步） */
 interface GrantsState {
@@ -36,22 +37,28 @@ export const useGrants = create<GrantsState>((set, get) => ({
     }
   },
   grant: async (moduleId, cap) => {
-    const cur = get().grants[moduleId] ?? []
-    if (cur.includes(cap)) return
-    const next = { ...get().grants, [moduleId]: [...cur, cap] }
-    set({ grants: next })
-    await persist(next)
+    await serializeByKey('module-grants', async () => {
+      const cur = get().grants[moduleId] ?? []
+      if (cur.includes(cap)) return
+      const next = { ...get().grants, [moduleId]: [...cur, cap] }
+      await persist(next)
+      set({ grants: next })
+    })
   },
   revoke: async (moduleId, cap) => {
-    const next = { ...get().grants, [moduleId]: (get().grants[moduleId] ?? []).filter((c) => c !== cap) }
-    set({ grants: next })
-    await persist(next)
+    await serializeByKey('module-grants', async () => {
+      const next = { ...get().grants, [moduleId]: (get().grants[moduleId] ?? []).filter((c) => c !== cap) }
+      await persist(next)
+      set({ grants: next })
+    })
   },
   revokeAll: async (moduleId) => {
-    const next = { ...get().grants }
-    delete next[moduleId]
-    set({ grants: next })
-    await persist(next)
+    await serializeByKey('module-grants', async () => {
+      const next = { ...get().grants }
+      delete next[moduleId]
+      await persist(next)
+      set({ grants: next })
+    })
   },
   has: (moduleId, cap) => (get().grants[moduleId] ?? []).includes(cap)
 }))

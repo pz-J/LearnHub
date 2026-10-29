@@ -7,6 +7,7 @@ import { syncNow } from '@/lib/sync'
 import { cn } from '@/lib/utils'
 
 const NAV: { route: Route; title: string }[] = [
+  { route: 'home', title: '学习首页' },
   { route: 'calendar', title: '日历' },
   { route: 'library', title: '文献库' },
   { route: 'reader', title: '阅读器' },
@@ -88,17 +89,18 @@ export function NavBar() {
   }
 
   return (
-    <div className="relative shrink-0 border-b border-line bg-bg-card">
-      <div className="flex h-12 items-center gap-1 overflow-x-auto px-3">
-        <div className="mr-3 flex shrink-0 items-center gap-1.5 font-semibold text-accent">
-          <span className="text-lg">🎓</span> LearnHub
+    <div className="relative z-30 shrink-0 border-b border-line/90 bg-bg-card/95 shadow-[0_4px_18px_rgb(0_0_0_/_0.08)] backdrop-blur-xl">
+      <div className="flex h-[54px] items-center gap-1 overflow-x-auto px-3 sm:px-4">
+        <div className="mr-2 flex shrink-0 items-center gap-2 border-r border-line/80 pr-4 sm:mr-3">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-accent/20 bg-gradient-to-br from-accent/25 to-accent/5 text-base shadow-inner shadow-accent/10">✳</span>
+          <span className="font-semibold tracking-tight text-txt">Learn<span className="text-accent">Hub</span></span>
         </div>
         {ordered.map((n) => (
           <button
             key={n.key}
             className={cn(
-              'shrink-0 rounded-lg px-2.5 py-1.5 text-sm',
-              route === n.key ? 'bg-accent/15 font-medium text-accent' : 'text-txt-dim hover:bg-bg-hover hover:text-txt'
+              'relative shrink-0 rounded-lg px-3 py-2 text-[13px] transition-colors',
+              route === n.key ? 'bg-accent/12 font-semibold text-accent after:absolute after:inset-x-3 after:-bottom-[7px] after:h-[2px] after:rounded-full after:bg-accent' : 'text-txt-dim hover:bg-bg-hover/80 hover:text-txt'
             )}
             onClick={() => navigate(n.key as Route)}
           >
@@ -109,13 +111,14 @@ export function NavBar() {
         <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
           <input
             readOnly
-            className="w-40 cursor-pointer rounded-lg border border-line bg-bg px-3 py-1.5 text-xs text-txt-dim hover:border-accent/60"
+            aria-label="打开快速搜索"
+            className="w-32 cursor-pointer rounded-lg border border-line/90 bg-bg/80 px-3 py-2 text-xs text-txt-dim hover:border-accent/50 hover:bg-bg-hover sm:w-40"
             value="搜索 Ctrl + K"
             onClick={() => setQuickSearch(true)}
           />
           <PomodoroWidget />
           <button
-            className="rounded-lg border border-line px-2.5 py-1.5 text-xs hover:bg-bg-hover disabled:opacity-50"
+            className="rounded-lg border border-line/90 px-2.5 py-2 text-xs text-txt-dim hover:border-accent/40 hover:bg-bg-hover hover:text-txt disabled:opacity-50"
             onClick={() => void doSync()}
             disabled={syncing}
             title="一键同步到 GitHub"
@@ -123,7 +126,7 @@ export function NavBar() {
             {syncing ? '同步中…' : '⟳ 同步'}
           </button>
           <button
-            className={cn('rounded-lg border px-2 py-1.5 text-xs', editing ? 'border-accent text-accent' : 'border-line text-txt-dim hover:bg-bg-hover')}
+            className={cn('rounded-lg border px-2.5 py-2 text-xs', editing ? 'border-accent/50 bg-accent/10 text-accent' : 'border-line/90 text-txt-dim hover:bg-bg-hover hover:text-txt')}
             onClick={() => setEditing(!editing)}
             title="编辑菜单栏（排序 / 显隐）"
           >

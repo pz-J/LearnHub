@@ -59,8 +59,8 @@
 | `permissions` | ✅ | **必需权限**：安装确认页列出，用户同意后安装并立即生效 |
 | `optionalPermissions` | — | **可选权限**：不随安装授予；模块运行时经 `host.requestPermission` 申请，逐次弹窗审批 |
 | `network.allowedHosts` | — | `network.fetch` 的域名白名单，支持 `*.example.com` 通配 |
-| `contributes.panels` | — | 注册侧边栏面板，`slot` 目前支持 `sidebar` |
-| `contributes.routes` | — | 注册顶部导航路由（整页视图） |
+| `contributes.panels` | — | 注册阅读器辅助侧栏面板，`slot` 目前支持 `sidebar`；适合短小、阅读时需要常驻的辅助工具 |
+| `contributes.routes` | — | 注册顶部全局主导航路由（整页视图）；完整功能模块优先使用此入口，避免把整个工作流塞进阅读器窄侧栏 |
 
 校验规则（宿主 `validateManifest`）：缺字段、非法 id、未知能力名都会被拒绝安装。
 
@@ -187,7 +187,7 @@ window.events.off(name, fn)
 | `reader:toolbar-click` | `{ moduleId, id, text, paperId }` | 模块注册的选区工具条按钮被点击 |
 | `reader:paper-opened` | `{ paperId }` | 打开论文 |
 | `search:open` | `{ text, paperId? }` | 用户请求搜索一段文字（搜索链路面板会接住：自动挂到当前层 / 新建链路） |
-| `ai:explain` | `{ text, paperId? }` | 用户请求 AI 解释一段文字（AI 面板接住并流式回答） |
+| `ai:explain` | `{ text, paperId?, page?, rects? }` | 用户请求 AI 解释一段文字（AI 面板接住并流式回答；阅读器发起时带上页码与页面归一化坐标，便于将解释保存回原文标记） |
 | `data:todo-updated` / `data:schedule-updated` / `data:notes-updated` / `data:flashcards-updated` | — | 对应数据变更 |
 | `sync:done` | `{ pushed, pulled, conflicts }` | GitHub 同步完成 |
 | `focus:done` | FocusSession | 番茄钟完成一次专注 |
@@ -227,7 +227,7 @@ window.events.off(name, fn)
 1. 新建文件夹（建议命名即模块 id），写入 `module.json` + `entry` 指定的 `index.js`（纯 JS，面向沙箱 API）。
 2. 打开 LearnHub →「模块中心」→「安装模块」→ 选择该文件夹。
 3. 审阅**权限确认页**（按普通/敏感/高危分色；元模块有红色高权限警示）→ 勾选「我已了解并同意」→「同意并安装」。
-4. 子模块的侧栏面板/导航路由自动出现；在「权限详情」中可查看/撤销运行时授权，随时启停/卸载。
+4. 子模块声明的侧栏面板或顶部主导航路由自动出现。完整功能模块建议使用 `contributes.routes`，仅把阅读时需要的轻量工具放进 `contributes.panels`；在「权限详情」中可查看/撤销运行时授权，随时启停/卸载。
 5. 批量导入：把多个模块文件夹放进同一个父文件夹（每个子文件夹含 `module.json`），用「批量导入」选中父文件夹，即可在统一确认页逐个审阅权限后一次安装；损坏或非模块子文件夹会被跳过并提示。
 6. 更新迭代：再次选择同一模块会显示更新确认页。确认后，宿主先在暂存目录验证并写入文件，再替换旧代码；更新保留模块私有存储，并清除额外授权，更新后的模块需要重新申请可选权限。内置 `core.*` 模块不可被外部模块覆盖。
 7. 授权记录存于 `userData/module-grants.json`（不参与 GitHub 同步）；模块私有存储经 `modstore:read` / `modstore:write` 服务落盘，并打包为单文件 `module-storage.json` 参与 GitHub 同步（克制上传，不逐模块建文件）——换机后重新安装模块，数据随同步自动恢复。卸载会清除授权和运行实例，但保留私有存储，方便同 ID 模块重新安装后恢复；如需彻底清理，请在用户数据目录中手动备份后删除对应存储文件。
@@ -241,7 +241,7 @@ window.events.off(name, fn)
 - `modules/com-learnhub-review-planner/`：复习规划，注册为顶部主导航整页入口，基于艾宾浩斯遗忘曲线（+1/+3/+7/+16/+35 天，遇周末自动顺延周一）为论文生成复习节点并写入日历，提供今日到期队列与复习打卡记录，可选 AI 根据标记与问答归档生成自测题。需 `calendar.write` 等权限，`ai.invoke`/`notify` 为可选。
 - `modules/com-learnhub-study-export/`：导出复习稿，注册为顶部主导航整页入口，勾选多篇论文后汇总思维链路问答（按搜索层级分组）、归档答案与标记解释，生成结构化 Markdown 复习稿，支持预览与单篇/合并导出（`files.pick` 授权后保存），`clipboard` 为可选。
 - `modules/com-learnhub-paper-guide/`：精读向导，注册为顶部主导航整页入口，基于论文的标记与问答流式生成六节 AI 导读（研究问题/方法要点/主要结论/术语速查/疑点追问/与我标记的联系），保留每篇最近 5 份历史，可一键存为笔记。需 `ai.invoke`。
-- `modules/com-learnhub-vocab-box/`：生词本，注册为侧栏面板，通过阅读器工具条按钮一键收词并在原文打紫色标记，支持 AI 释义、备注、搜索、CSV 导出与复制。需 `reader.annotate` 等权限，`ai.invoke`/`clipboard` 为可选。
+- `modules/com-learnhub-vocab-box/`：生词本，注册为顶部主导航整页入口；仍可通过阅读器选区工具条一键收词并在原文打紫色标记，支持 AI 释义、备注、搜索、CSV 导出与复制。需 `reader.annotate` 等权限，`ai.invoke`/`clipboard` 为可选。
 
 建议先安装科研日志，再安装权限管家；复习规划、精读向导、生词本、导出复习稿按学习流程自行选用。科研日志的 `ai.invoke` 和 `files.pick` 是可选权限，首次使用相应功能时才会请求授权。元模块也可管理示例模块的 `notify` 权限。元模块只能管理宿主已实现的权限目录；任意主进程桥接仍未开放。新增特权能力时，需在宿主添加固定 API、主进程独立校验和明确授权规则（网络类可参考 `core.litman` 与主进程 `module:openExternal` 的清单+授权双重校验实现）。
 

@@ -43,3 +43,8 @@ export const useReaderState = create<ReaderState>((set) => ({
     if (id) setTimeout(() => set({ flashHighlightId: null }), 1800)
   }
 }))
+
+/** Remove ephemeral toolbar registrations when an external module is disabled, updated, or uninstalled. */
+export function clearModuleReaderButtons(moduleId: string): void {
+  useReaderState.getState().unregisterModule(moduleId)
+}

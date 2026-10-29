@@ -10,6 +10,7 @@ const ReaderView = lazy(() => import('@/components/reader/ReaderView').then((m) 
 const NotesView = lazy(() => import('@/components/views/NotesView').then((m) => ({ default: m.NotesView })))
 const ModuleHub = lazy(() => import('@/components/hub/ModuleHub').then((m) => ({ default: m.ModuleHub })))
 const SettingsView = lazy(() => import('@/components/settings/SettingsView').then((m) => ({ default: m.SettingsView })))
+const StudyHome = lazy(() => import('@/components/views/StudyHome').then((m) => ({ default: m.StudyHome })))
 import { BUILTIN_ROUTE_COMPONENTS } from '@/components/builtin-modules'
 import { AchievementToasts } from '@/components/builtin-modules/achievements/AchievementToasts'
 import { ModuleSandboxFrame } from '@/kernel/ModuleSandboxFrame'
@@ -82,6 +83,7 @@ function RouteBody() {
   const navigate = useUi((s) => s.navigate)
   const moduleId = route.startsWith('mod:') ? route.slice(4).split(':')[0] : ''
   const moduleEnabled = useRegistry((s) => (moduleId ? s.modules[moduleId]?.enabled ?? false : true))
+  if (route === 'home') return <Suspense fallback={<RouteLoading />}><StudyHome /></Suspense>
   if (route === 'calendar') return <Suspense fallback={<RouteLoading /> }><CalendarModule /></Suspense>
   if (route === 'library') return <Suspense fallback={<RouteLoading /> }><LibraryView /></Suspense>
   if (route === 'reader') return <Suspense fallback={<RouteLoading /> }><ReaderView /></Suspense>

@@ -3,6 +3,8 @@ import { lh } from '@/lib/ipc'
 import { validateManifest, type ModuleManifest } from './manifest'
 import { useGrants } from './grants'
 import { useSettings } from '@/stores/settings'
+import { clearModuleReaderButtons } from '@/stores/readerState'
+import { installWithGrantRollback, uninstallWithGrantRollback } from './moduleLifecycle'
 
 export interface ExternalFiles {
   [rel: string]: string
@@ -76,29 +78,62 @@ export const useRegistry = create<RegistryState>((set, get) => ({
     set({ modules })
   },
   installExternal: async (m, files) => {
-    await lh.modulesInstall(m.id, files)
     const grants = useGrants.getState()
-    // 更新模块后只保留新清单声明的必需权限；旧的可选授权必须重新审批。
-    await grants.revokeAll(m.id)
-    // 安装时声明的必需权限自动生效；可选权限待运行时审批
-    for (const p of m.permissions) await grants.grant(m.id, p as never)
+    const previous = get().modules[m.id]
+    const previousGrants = [...(grants.grants[m.id] ?? [])]
+    const previousEnabled = previous?.enabled ?? deriveEnabled(m)
+    await installWithGrantRollback({
+      prepareGrants: async () => {
+        // Updates discard optional grants; the new manifest's required permissions are explicit.
+        await useGrants.getState().revokeAll(m.id)
+        for (const p of m.permissions) await useGrants.getState().grant(m.id, p as never)
+      },
+      enable: () => persistEnabled(m.id, true),
+      install: () => lh.modulesInstall(m.id, files),
+      restoreGrants: async () => {
+        await useGrants.getState().revokeAll(m.id)
+        for (const cap of previousGrants) await useGrants.getState().grant(m.id, cap as never)
+      },
+      restoreEnabled: () => persistEnabled(m.id, previousEnabled)
+    })
+    clearModuleReaderButtons(m.id)
     const modules = { ...get().modules }
     modules[m.id] = { id: m.id, manifest: m, source: 'external', enabled: true, files }
     set({ modules })
-    await persistEnabled(m.id, true)
   },
   uninstallExternal: async (id) => {
-    await useGrants.getState().revokeAll(id)
-    await lh.modulesUninstall(id)
+    const record = get().modules[id]
+    if (!record || record.source !== 'external') return
+    await persistEnabled(id, false)
+    set({ modules: { ...get().modules, [id]: { ...record, enabled: false } } })
+    clearModuleReaderButtons(id)
+    const grantStore = useGrants.getState()
+    try {
+      await uninstallWithGrantRollback({
+        id,
+        previousGrants: [...(grantStore.grants[id] ?? [])],
+        revokeAll: (moduleId) => useGrants.getState().revokeAll(moduleId),
+        uninstall: (moduleId) => lh.modulesUninstall(moduleId),
+        grant: (moduleId, capability) => useGrants.getState().grant(moduleId, capability as never)
+      })
+    } catch (error) {
+      try {
+        await persistEnabled(id, record.enabled)
+        set({ modules: { ...get().modules, [id]: { ...record, enabled: record.enabled } } })
+      } catch (restoreError) {
+        throw new Error(`卸载失败，恢复模块启用状态也失败：${(restoreError as Error).message || '未知错误'}；原始错误：${(error as Error).message || '未知错误'}`)
+      }
+      throw error
+    }
     const modules = { ...get().modules }
     delete modules[id]
     set({ modules })
-    await persistEnabled(id, false)
   },
   setEnabled: async (id, enabled) => {
     const rec = get().modules[id]
     if (!rec) return
     await persistEnabled(id, enabled)
+    if (!enabled) clearModuleReaderButtons(id)
     set({ modules: { ...get().modules, [id]: { ...rec, enabled } } })
   },
   get: (id) => get().modules[id]

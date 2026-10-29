@@ -9,6 +9,8 @@ import { useFlashcards } from '@/stores/flashcards'
 import { useReaderState } from '@/stores/readerState'
 import { eventBus, EVENTS } from '@/kernel/eventBus'
 import { truncate } from '@/lib/utils'
+import { legacyReaderPageKey, normalizeReaderLocation, readerLocationKey, resolveReaderHighlight, resolveReaderPageRequest, type ReaderLocation } from '@/lib/readerLocation'
+import { isActiveReaderRequest } from '@/lib/readerRequest'
 
 const HL_COLORS = ['#ffd54d', '#8ef0c2', '#9dc0ff', '#f7a8c4']
 
@@ -21,7 +23,7 @@ interface NormRect {
 
 const normText = (t: string) => t.replace(/\s+/g, '').toLowerCase()
 
-const topBtn = 'rounded border border-line px-2 py-1 text-xs hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-40'
+const topBtn = 'rounded-md border border-line px-2.5 py-1.5 text-xs transition-colors hover:border-accent/50 hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-40'
 
 /** 在文本层 DOM 中查找目标文本的所有出现位置（去空白匹配），返回每次出现的归一化矩形组 */
 function findTextRects(root: HTMLElement, target: string, wrap: HTMLElement, limit = 5): NormRect[][] {
@@ -85,6 +87,8 @@ const sameRect = (a: NormRect, b: NormRect) => Math.abs(a.x - b.x) < 0.003 && Ma
 /** 论文阅读器：pdfjs 渲染 + 文本层 + 高亮层 + 选区工具条 + 批注 */
 export function ReaderView() {
   const paperId = useUi((s) => s.activePaperId)
+  const requestedHighlight = useUi((s) => s.requestedHighlight)
+  const requestedPage = useUi((s) => s.requestedPage)
   const navigate = useUi((s) => s.navigate)
   const setSidebarTab = useUi((s) => s.setSidebarTab)
   const toast = useUi((s) => s.toast)
@@ -92,6 +96,7 @@ export function ReaderView() {
   const zoom = useSettings((s) => s.settings.reader.zoom)
 
   const docRef = useRef<PDFDocumentProxy | null>(null)
+  const loadedPaperIdRef = useRef<string | null>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const pageAreaRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -108,6 +113,8 @@ export function ReaderView() {
   const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(null)
   const [ctx, setCtx] = useState<{ x: number; y: number } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const modButtons = useReaderState((s) => s.toolbarButtons)
   const flashId = useReaderState((s) => s.flashHighlightId)
 
@@ -157,6 +164,10 @@ export function ReaderView() {
   const removeHighlight = usePapers((s) => s.removeHighlight)
   // 缩放前记录滚动比例、渲染完成后恢复，保证 Ctrl+滚轮/快捷键/复位缩放都不丢当前阅读位置
   const zoomRestoreRef = useRef<number | null>(null)
+  const resumeLocationRef = useRef<ReaderLocation | null>(null)
+  const highlightJumpTimerRef = useRef<number | null>(null)
+  const pendingHighlightRef = useRef<{ paperId: string; highlightId: string; page: number } | null>(null)
+  const jumpToHighlightRef = useRef<((target: { paperId: string; highlightId: string }, notifyMissing?: boolean) => void) | null>(null)
   const zoomTo = (next: number) => {
     const sc = wrapRef.current?.parentElement
     if (sc) zoomRestoreRef.current = sc.scrollTop / Math.max(1, sc.scrollHeight - sc.clientHeight)
@@ -282,6 +293,7 @@ export function ReaderView() {
     let alive = true
     setNumPages(0)
     setPage(1)
+    setLoadError(null)
     setOutline(null)
     setResults([])
     docTextCacheRef.current = null
@@ -291,18 +303,20 @@ export function ReaderView() {
     setAutoScroll(0)
     docRef.current?.destroy()
     docRef.current = null
+    loadedPaperIdRef.current = null
     if (!paperId) return
     setBusy(true)
     ;(async () => {
       try {
         const buf = (await lh.pdfRead(paperId)) as ArrayBuffer
-        if (!alive) return
+        if (!isActiveReaderRequest(alive, paperId, useUi.getState().activePaperId)) return
         const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise
-        if (!alive) {
+        if (!isActiveReaderRequest(alive, paperId, useUi.getState().activePaperId)) {
           void doc.destroy()
           return
         }
         docRef.current = doc
+        loadedPaperIdRef.current = paperId
         setNumPages(doc.numPages)
         // 记录最近打开的论文（空状态「继续阅读」入口用）
         try {
@@ -311,14 +325,25 @@ export function ReaderView() {
           // 配额异常静默跳过
         }
         // 阅读位置记忆：重开论文自动回到上次读到的页（提示用户已被记住，超过 1 页才提示）
-        const saved = Number(localStorage.getItem('lh:lastpage:' + paperId) ?? 1)
-        if (Number.isFinite(saved) && saved >= 1 && saved <= doc.numPages) {
-          const p = Math.floor(saved)
+        let location: ReaderLocation | null = null
+        try {
+          location = normalizeReaderLocation(JSON.parse(localStorage.getItem(readerLocationKey(paperId)) || 'null'), doc.numPages)
+        } catch { /* corrupted checkpoint falls back to the legacy page-only key */ }
+        if (!location) {
+          const legacy = Number(localStorage.getItem(legacyReaderPageKey(paperId)) ?? 1)
+          if (Number.isFinite(legacy) && legacy >= 1 && legacy <= doc.numPages) location = { page: Math.floor(legacy), scrollRatio: 0, updatedAt: 0 }
+        }
+        resumeLocationRef.current = location
+        if (location) {
+          const p = location.page
           if (p > 1) toast(`已回到上次阅读位置：第 ${p} 页`, 'ok')
           setPage(p)
         }
       } catch (err) {
-        toast('PDF 加载失败：' + (err as Error).message, 'error')
+        if (!isActiveReaderRequest(alive, paperId, useUi.getState().activePaperId)) return
+        const message = (err as Error).message || '文件读取或 PDF 解析失败'
+        setLoadError(message)
+        toast('PDF 加载失败：' + message, 'error')
       } finally {
         if (alive) setBusy(false)
       }
@@ -328,19 +353,49 @@ export function ReaderView() {
       taskRef.current?.cancel()
       void docRef.current?.destroy()
       docRef.current = null
+      loadedPaperIdRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paperId])
+  }, [paperId, loadAttempt])
 
   // ---------- 阅读位置记忆：翻页即保存，重开论文恢复 ----------
   useEffect(() => {
-    if (!paperId || !page) return
+    // Do not overwrite another paper's checkpoint while the next PDF is still loading.
+    if (!paperId || !page || !docRef.current) return
     try {
-      localStorage.setItem('lh:lastpage:' + paperId, String(page))
+      localStorage.setItem(legacyReaderPageKey(paperId), String(page))
+      const scroller = pageAreaRef.current
+      const previous = resumeLocationRef.current
+      const ratio = previous?.page === page ? previous.scrollRatio : 0
+      localStorage.setItem(readerLocationKey(paperId), JSON.stringify({ page, scrollRatio: ratio, updatedAt: Date.now() } satisfies ReaderLocation))
     } catch {
       // localStorage 配额/隐私模式异常时静默跳过
     }
-  }, [paperId, page])
+  }, [paperId, page, numPages])
+
+  // Persist exact in-page position as well as page number. Debounce with rAF, no timers or schema migration required.
+  useEffect(() => {
+    const scroller = pageAreaRef.current
+    if (!scroller || !paperId || !docRef.current) return
+    let frame = 0
+    const savePosition = () => {
+      if (frame) cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        try {
+          const ratio = scroller.scrollTop / Math.max(1, scroller.scrollHeight - scroller.clientHeight)
+          const checkpoint: ReaderLocation = { page, scrollRatio: Math.min(1, Math.max(0, ratio)), updatedAt: Date.now() }
+          localStorage.setItem(legacyReaderPageKey(paperId), String(page))
+          localStorage.setItem(readerLocationKey(paperId), JSON.stringify(checkpoint))
+        } catch { /* localStorage may be unavailable in private/restricted contexts */ }
+      })
+    }
+    scroller.addEventListener('scroll', savePosition, { passive: true })
+    return () => {
+      scroller.removeEventListener('scroll', savePosition)
+      if (frame) cancelAnimationFrame(frame)
+    }
+  }, [paperId, page, numPages])
 
   // ---------- 页码输入框跟随当前页 ----------
   useEffect(() => {
@@ -486,6 +541,20 @@ export function ReaderView() {
             setLinkAreas([])
           }
           renderedPageRef.current = page
+          const pendingHighlight = pendingHighlightRef.current
+          if (pendingHighlight?.paperId === paperId && pendingHighlight.page === page) {
+            pendingHighlightRef.current = null
+            jumpToHighlightRef.current?.(pendingHighlight, true)
+          }
+          // Restore the exact reading position after the page and text layer have settled.
+          if (resumeLocationRef.current?.page === page && zoomRestoreRef.current == null) {
+            const ratio = resumeLocationRef.current.scrollRatio
+            resumeLocationRef.current = null
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+              const scroller = pageAreaRef.current
+              if (scroller) scroller.scrollTop = ratio * Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+            }))
+          }
           // 自动滚屏翻页就位：放开 interval 继续滚动（页顶重置已在渲染开始时完成）
           if (pendingAutoNext.current) pendingAutoNext.current = false
         }
@@ -658,7 +727,7 @@ export function ReaderView() {
     switch (a) {
       case 'explain':
         setSidebarTab('ai')
-        eventBus.emit('ai:explain', { text, paperId })
+        eventBus.emit('ai:explain', { text, paperId, page, rects: sel.rects })
         break
       case 'search':
         setSidebarTab('search')
@@ -691,11 +760,19 @@ export function ReaderView() {
 
   // ---------- 跨组件联动：滚动定位到高亮 ----------
   useEffect(() => {
-    const off = eventBus.on(EVENTS.scrollToHighlight, (payload) => {
-      const p = payload as { paperId: string; highlightId: string }
+    if (pendingHighlightRef.current && (pendingHighlightRef.current.paperId !== paperId || pendingHighlightRef.current.page !== page)) pendingHighlightRef.current = null
+    if (highlightJumpTimerRef.current != null) {
+      window.clearTimeout(highlightJumpTimerRef.current)
+      highlightJumpTimerRef.current = null
+    }
+    const jump = (p: { paperId: string; highlightId: string }, notifyMissing = false) => {
       if (!paperId || p.paperId !== paperId) return
-      const h = (usePapers.getState().papers[paperId]?.highlights ?? []).find((x) => x.id === p.highlightId)
-      if (!h) return
+      const resolution = resolveReaderHighlight(usePapers.getState().papers[paperId]?.highlights ?? [], p.highlightId, numPages)
+      if (resolution.kind === 'missing') {
+        if (notifyMissing) toast('对应原文标记已不存在，可能已被删除；论文仍可继续阅读。', 'info')
+        return
+      }
+      const h = resolution.highlight
       const go = () => {
         const wrap = wrapRef.current
         if (!wrap) return
@@ -704,15 +781,56 @@ export function ReaderView() {
         scroller?.scrollTo({ top: Math.max(0, y * wrap.offsetHeight + wrap.offsetTop - scroller.clientHeight / 3), behavior: 'smooth' })
         useReaderState.getState().flash(h.id)
       }
-      if (h.page !== page) {
-        setPage(h.page)
-        setTimeout(go, 600)
+      if (resolution.pageClamped) {
+        toast(`标记记录指向第 ${h.page} 页，但文档共 ${numPages} 页；已打开第 ${resolution.page} 页，无法精确显示该标记。`, 'info')
+        if (resolution.page !== page) setPage(resolution.page)
+        return
+      }
+      if (resolution.page !== page) {
+        pendingHighlightRef.current = { paperId: p.paperId, highlightId: h.id, page: resolution.page }
+        setPage(resolution.page)
       } else {
+        pendingHighlightRef.current = null
         go()
       }
-    })
-    return off
-  }, [paperId, page])
+    }
+    jumpToHighlightRef.current = jump
+    const off = eventBus.on(EVENTS.scrollToHighlight, (payload) => jump(payload as { paperId: string; highlightId: string }, true))
+    if (requestedHighlight && requestedHighlight.paperId !== paperId) {
+      useUi.getState().consumeRequestedHighlight()
+    } else if (numPages > 0 && requestedHighlight?.paperId === paperId) {
+      highlightJumpTimerRef.current = window.setTimeout(() => {
+        highlightJumpTimerRef.current = null
+        const latest = useUi.getState().requestedHighlight
+        if (latest?.paperId !== paperId || latest.highlightId !== requestedHighlight.highlightId) return
+        useUi.getState().consumeRequestedHighlight()
+        jump(requestedHighlight, true)
+      }, 100)
+    }
+    return () => {
+      off()
+      if (highlightJumpTimerRef.current != null) {
+        window.clearTimeout(highlightJumpTimerRef.current)
+        highlightJumpTimerRef.current = null
+      }
+    }
+  }, [paperId, page, requestedHighlight, numPages])
+
+  // Source-note fallback navigation: wait until this exact paper's PDF is ready before applying its page.
+  useEffect(() => {
+    if (!requestedPage) return
+    if (requestedPage.paperId !== paperId) {
+      useUi.getState().consumeRequestedPage()
+      return
+    }
+    if (loadedPaperIdRef.current !== paperId || numPages <= 0) return
+    const resolved = resolveReaderPageRequest(requestedPage.page, numPages)
+    useUi.getState().consumeRequestedPage()
+    if (resolved.clamped) {
+      toast(`来源记录指向第 ${requestedPage.page} 页，但文档共 ${numPages} 页；已定位到第 ${resolved.page} 页。`, 'info')
+    }
+    if (resolved.page !== page) setPage(resolved.page)
+  }, [requestedPage, paperId, numPages, page])
 
   // ---------- 跨组件联动：搜索页「收为答案」→ 链路根问题的原文标记升级为答案色（绿色） ----------
   useEffect(() => {
@@ -879,7 +997,7 @@ export function ReaderView() {
             继续阅读：{truncate(lastPaper.title, 28)}
           </button>
         )}
-        {lastPaper && lastPage > 1 && <div className="text-xs">上次读到第 {Math.floor(lastPage)} 页，打开后自动跳回</div>}
+        {lastPaper && lastPage > 1 && <div className="text-xs">上次读到第 {Math.floor(lastPage)} 页，打开后自动跳回；页内位置也会一并记住</div>}
         <button className="rounded-lg border border-line px-4 py-2 text-sm text-txt hover:bg-bg-hover" onClick={() => navigate('library')}>
           去文献库选择
         </button>
@@ -892,7 +1010,7 @@ export function ReaderView() {
   return (
     <div className="relative flex h-full flex-col overflow-hidden" onMouseDown={onContainerMouseDown}>
       {/* 顶部栏 */}
-      <div className="flex items-center gap-2 border-b border-line bg-bg-card px-4 py-2 text-sm">
+      <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-line bg-bg-card/95 px-4 py-2 text-sm shadow-sm backdrop-blur">
         <button className={topBtn} onClick={() => navigate('library')}>
           ← 文献库
         </button>
@@ -995,6 +1113,16 @@ export function ReaderView() {
             +
           </button>
         </div>
+      </div>
+      <div
+        className="h-0.5 shrink-0 bg-bg-soft"
+        role="progressbar"
+        aria-label="论文阅读进度"
+        aria-valuemin={0}
+        aria-valuemax={numPages || 1}
+        aria-valuenow={numPages > 0 ? page : 0}
+      >
+        <div className="h-full bg-accent/80 transition-[width] duration-300" style={{ width: `${numPages > 0 ? (page / numPages) * 100 : 0}%` }} />
       </div>
 
       {/* 全文搜索面板 */}
@@ -1108,7 +1236,21 @@ export function ReaderView() {
       )}
 
       {/* 页面区 */}
-      <div ref={pageAreaRef} className="flex-1 overflow-auto bg-bg-deep p-6" data-reader-root onMouseUp={captureSelection} onContextMenu={onCtxMenu}>
+      <div ref={pageAreaRef} className="flex-1 overflow-auto bg-bg-deep p-6" style={{ backgroundImage: 'radial-gradient(ellipse at top, rgba(91,140,255,0.045), transparent 72%)' }} data-reader-root onMouseUp={captureSelection} onContextMenu={onCtxMenu}>
+        {loadError && (
+          <div className="mx-auto mb-4 flex max-w-xl items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/5 p-4 text-sm" role="alert">
+            <span className="mt-0.5 text-red-400" aria-hidden="true">!</span>
+            <div className="min-w-0 flex-1">
+              <div className="font-medium text-txt">这篇 PDF 暂时无法打开</div>
+              <p className="mt-1 break-words text-xs leading-5 text-txt-dim">{loadError}</p>
+              <p className="mt-1 text-xs text-txt-dim">原文和研究记录没有被删除。可以重试读取，或返回文献库检查文件是否仍可用。</p>
+              <div className="mt-3 flex gap-2">
+                <button className="lh-button lh-button-primary px-3 py-1.5 text-xs" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>重试加载</button>
+                <button className="lh-button px-3 py-1.5 text-xs" onClick={() => navigate('library')}>返回文献库</button>
+              </div>
+            </div>
+          </div>
+        )}
         <div
           ref={wrapRef}
           className="relative mx-auto bg-white shadow-2xl"
@@ -1163,7 +1305,7 @@ export function ReaderView() {
               }}
             />
           )}
-          {busy && <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500">加载中…</div>}
+          {busy && <div className="absolute inset-0 flex items-center justify-center bg-white/80 text-sm text-gray-600" role="status">正在读取并渲染 PDF…</div>}
         </div>
       </div>
 

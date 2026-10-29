@@ -1,6 +1,6 @@
 import { secureHandle } from './services/ipcSecurity'
 import { app, BrowserWindow, Menu, dialog } from 'electron'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { pathToFileURL } from 'url'
 import { registerStoreIpc } from './services/store'
 import { registerFilesIpc } from './services/files'
@@ -10,6 +10,10 @@ import { registerMiscIpc } from './services/misc'
 import { registerModulesIpc } from './services/modules'
 import { registerPomForceIpc, isForced } from './services/forceFocus'
 import { isTrustedRendererUrl } from './services/securityValidation'
+
+// Explicit, development-only override for isolated desktop QA. Normal launches keep Electron's default userData path.
+const qaUserDataDir = process.env.LEARNHUB_QA_USER_DATA_DIR
+if (qaUserDataDir && !app.isPackaged) app.setPath('userData', resolve(qaUserDataDir))
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({

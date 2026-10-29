@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import { lh, uid } from '@/lib/ipc'
 import { eventBus } from '@/kernel/eventBus'
 import type { Note } from '@/types'
+import { serializeByKey } from '@/lib/serialQueue'
+import { removeNoteDurably } from '@/lib/noteRemoval'
 
 const DIR = 'notes'
 
@@ -64,26 +66,32 @@ export const useNotes = create<NotesState>((set, get) => ({
   },
   write: async (id, patch) => {
     const nid = id ?? uid('n_') + '.md'
-    const cur = get().notes[nid]
-    const next: Note = {
-      id: nid,
-      title: patch.title ?? cur?.title ?? nid.replace(/\.md$/, ''),
-      tags: patch.tags ?? cur?.tags ?? [],
-      paperId: patch.paperId ?? cur?.paperId,
-      updatedAt: Date.now(),
-      body: patch.body ?? cur?.body ?? ''
-    }
-    set({ notes: { ...get().notes, [nid]: next } })
-    await lh.dataWrite(`${DIR}/${nid}`, toMarkdown(next))
-    eventBus.emit('data:notes-updated')
-    return next
+    // Serialize writes per note: rapid editor changes must not let an older disk write win.
+    return serializeByKey(nid, async () => {
+      const cur = get().notes[nid]
+      const next: Note = {
+        id: nid,
+        title: patch.title ?? cur?.title ?? nid.replace(/\.md$/, ''),
+        tags: patch.tags ?? cur?.tags ?? [],
+        paperId: patch.paperId ?? cur?.paperId,
+        updatedAt: Date.now(),
+        body: patch.body ?? cur?.body ?? ''
+      }
+      await lh.dataWrite(`${DIR}/${nid}`, toMarkdown(next))
+      set({ notes: { ...get().notes, [nid]: next } })
+      eventBus.emit('data:notes-updated')
+      return next
+    })
   },
   remove: async (id) => {
-    await lh.dataDelete(`${DIR}/${id}`)
-    const notes = { ...get().notes }
-    delete notes[id]
-    set({ notes })
-    eventBus.emit('data:notes-updated')
+    await removeNoteDurably({
+      id,
+      serialize: serializeByKey,
+      removeFromDisk: (noteId) => lh.dataDelete(`${DIR}/${noteId}`),
+      current: () => get().notes,
+      publish: (notes) => set({ notes }),
+      emit: () => eventBus.emit('data:notes-updated')
+    })
   },
   listFor: (paperId) =>
     Object.values(get().notes)
